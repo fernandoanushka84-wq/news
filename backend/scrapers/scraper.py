@@ -8,7 +8,7 @@ from typing import List, Dict, Optional
 
 from scrapers.sources import NEWS_SOURCES, TOURISM_KEYWORDS
 from models.classifier import classify_article
-from app.database import get_engine, SessionLocal, init_db
+from app.database import get_engine, get_session, init_db
 from app.models import NewsArticle
 
 HEADERS = {
@@ -145,16 +145,21 @@ def save_article(db, article_data: dict, classification: dict) -> bool:
 
 
 def run_full_scrape():
-    """Main scraping pipeline. Can be called from API or startup."""
+    """
+    Main scraping pipeline.
+    Safe to call from FastAPI background tasks.
+    Always creates a fresh DB session via get_session().
+    """
+    print("[SCRAPE] Starting full scrape...")
     init_db()
-    if SessionLocal is None:
-        get_engine()
-    db = SessionLocal()
+    get_engine()  # ensure engine + SessionLocal exist
+
+    db = get_session()  # <-- fixed: never use SessionLocal() directly
     total_saved = 0
 
     try:
         for source in NEWS_SOURCES:
-            print(f"Processing source: {source['name']}")
+            print(f"[SCRAPE] Processing source: {source['name']}")
             articles = []
 
             if source.get("rss_url"):
@@ -170,20 +175,27 @@ def run_full_scrape():
                     seen.add(a["url"])
                     unique_articles.append(a)
 
-            print(f"  Found {len(unique_articles)} candidate articles")
+            print(f"[SCRAPE]   Found {len(unique_articles)} candidate articles")
 
             for article in unique_articles:
-                classification = classify_article(
-                    article["title"],
-                    article.get("summary", "")
-                )
-                if save_article(db, article, classification):
-                    total_saved += 1
-                    print(f"  Saved: {article['title'][:60]}... [{classification.get('category')}]")
+                try:
+                    classification = classify_article(
+                        article["title"],
+                        article.get("summary", "")
+                    )
+                    if save_article(db, article, classification):
+                        total_saved += 1
+                        print(f"[SCRAPE]   Saved: {article['title'][:60]}... [{classification.get('category')}]")
+                except Exception as e:
+                    print(f"[SCRAPE]   Error classifying/saving article: {e}")
 
                 time.sleep(0.3)
 
-        print(f"\nTotal new tourism articles saved: {total_saved}")
+        print(f"[SCRAPE] Finished. Total new tourism articles saved: {total_saved}")
         return total_saved
+    except Exception as e:
+        print(f"[SCRAPE] Fatal error: {e}")
+        raise
     finally:
         db.close()
+        print("[SCRAPE] DB session closed.")

@@ -1,9 +1,7 @@
 import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy.exc import OperationalError
 from dotenv import load_dotenv
-import pymysql
 
 load_dotenv()
 
@@ -18,7 +16,6 @@ DATABASE_URL = os.getenv(
     f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
 )
 
-# Engine without database name (for creating DB)
 SERVER_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}"
 
 engine = None
@@ -31,7 +28,10 @@ def ensure_database_exists():
     try:
         temp_engine = create_engine(SERVER_URL, pool_pre_ping=True)
         with temp_engine.connect() as conn:
-            conn.execute(text(f"CREATE DATABASE IF NOT EXISTS `{MYSQL_DATABASE}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"))
+            conn.execute(text(
+                f"CREATE DATABASE IF NOT EXISTS `{MYSQL_DATABASE}` "
+                f"CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+            ))
             conn.commit()
         temp_engine.dispose()
         print(f"[DB] Database '{MYSQL_DATABASE}' is ready.")
@@ -41,6 +41,7 @@ def ensure_database_exists():
 
 
 def get_engine():
+    """Create engine and SessionLocal if not already created."""
     global engine, SessionLocal
     if engine is None:
         ensure_database_exists()
@@ -51,22 +52,29 @@ def get_engine():
             echo=False
         )
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        print("[DB] Engine and SessionLocal created.")
     return engine
+
+
+def get_session():
+    """Always return a new DB session. Safe to call from background tasks."""
+    get_engine()  # ensure SessionLocal is set
+    if SessionLocal is None:
+        raise RuntimeError("SessionLocal is not initialized. Call get_engine() first.")
+    return SessionLocal()
 
 
 def init_db():
     """Create all tables if they do not exist. Called automatically on backend startup."""
     eng = get_engine()
-    # Import models so they are registered with Base
     from app.models import NewsArticle  # noqa: F401
     Base.metadata.create_all(bind=eng)
     print("[DB] Tables created / verified successfully.")
 
 
 def get_db():
-    if SessionLocal is None:
-        get_engine()
-    db = SessionLocal()
+    """FastAPI dependency for request-scoped sessions."""
+    db = get_session()
     try:
         yield db
     finally:
