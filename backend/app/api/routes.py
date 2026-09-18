@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query, BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func
-from typing import Optional, List
+from sqlalchemy import func, text
+from typing import Optional
 
 from app.database import get_db
 from app.models import NewsArticle
@@ -16,8 +16,11 @@ router = APIRouter()
 def health_check(db: Session = Depends(get_db)):
     db_status = "ok"
     try:
-        db.execute(func.select(1))
-    except Exception:
+        # Correct SQLAlchemy 2.0 way to test connection
+        db.execute(text("SELECT 1"))
+        db.commit()
+    except Exception as e:
+        print(f"[HEALTH] DB check failed: {e}")
         db_status = "error"
 
     ollama_status = check_ollama_status()
